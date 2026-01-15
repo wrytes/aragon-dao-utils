@@ -7,7 +7,7 @@
 	"module": "./dist/index.mjs",
 	"types": "./dist/index.d.ts",
 	"author": "samclassix <samclassix@proton.me>",
-	"description": "",
+	"description": "Solidity smart contracts and utilities for Aragon DAO integrations, including ERC-1271 signature validation with MultiSig plugin membership verification",
 	"directories": {
 		"test": "test",
 		"contracts": "contracts"
@@ -28,12 +28,19 @@
 		"url": "git+https://github.com/wrytes/aragon-dao-utils"
 	},
 	"keywords": [
-		"payment-channels",
-		"layer2",
-		"evm",
-		"optimistic-settlement",
-		"eip-712"
+		"aragon",
+		"dao",
+		"erc-1271",
+		"multisig",
+		"signature-validation",
+		"permission-condition",
+		"solidity",
+		"ethereum"
 	],
+	"bugs": {
+		"url": "https://github.com/wrytes/aragon-dao-utils/issues"
+	},
+	"homepage": "https://github.com/wrytes/aragon-dao-utils#readme",
 	"devDependencies": {
 		"@nomicfoundation/hardhat-chai-matchers": "^2.0.9",
 		"@nomicfoundation/hardhat-ethers": "^3.0.9",
