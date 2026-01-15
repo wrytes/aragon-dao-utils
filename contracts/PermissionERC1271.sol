@@ -56,7 +56,7 @@ contract PermissionERC1271 is IPermissionERC1271 {
 
 		// Verify MultiSig plugin is still authorized on the DAO
 		// Check if MultiSig has EXECUTE_PERMISSION on the DAO
-		if (!IDAO(_where).hasPermission(_where, multiSigPlugin, EXECUTE_PERMISSION_ID, '')) {
+		if (IDAO(_where).hasPermission(_where, multiSigPlugin, EXECUTE_PERMISSION_ID, '') == false) {
 			return false; // MultiSig plugin is no longer authorized
 		}
 
