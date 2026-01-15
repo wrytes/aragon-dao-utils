@@ -1,0 +1,71 @@
+{
+	"name": "@wrytes/aragon-dao-utils",
+	"version": "0.0.1",
+	"private": true,
+	"license": "GPL-3.0",
+	"main": "./dist/index.js",
+	"module": "./dist/index.mjs",
+	"types": "./dist/index.d.ts",
+	"author": "samclassix <samclassix@proton.me>",
+	"description": "",
+	"directories": {
+		"test": "test",
+		"contracts": "contracts"
+	},
+	"scripts": {
+		"wallet": "npx ts-node helper/wallet.info.ts",
+		"wallet:info": "npx ts-node helper/wallet.info.ts",
+		"compile": "npx hardhat compile",
+		"test": "npx hardhat test",
+		"coverage": "npx hardhat coverage",
+		"deploy": "npx hardhat ignition deploy",
+		"verify": "npx hardhat verify",
+		"npm:build": "tsup",
+		"npm:publish": "npm publish --access public"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/wrytes/aragon-dao-utils"
+	},
+	"keywords": [
+		"payment-channels",
+		"layer2",
+		"evm",
+		"optimistic-settlement",
+		"eip-712"
+	],
+	"devDependencies": {
+		"@nomicfoundation/hardhat-chai-matchers": "^2.0.9",
+		"@nomicfoundation/hardhat-ethers": "^3.0.9",
+		"@nomicfoundation/hardhat-ignition": "^0.15.11",
+		"@nomicfoundation/hardhat-ignition-ethers": "^0.15.12",
+		"@nomicfoundation/hardhat-network-helpers": "^1.0.12",
+		"@nomicfoundation/hardhat-toolbox": "^5.0.0",
+		"@nomicfoundation/hardhat-verify": "^2.1.1",
+		"@nomicfoundation/ignition-core": "^0.15.11",
+		"@openzeppelin/contracts": "^5.1.0",
+		"@types/chai": "^4.3.6",
+		"@types/mocha": "^10.0.1",
+		"chai": "4",
+		"dotenv": "^16.3.1",
+		"ethers": "^6.14.4",
+		"hardhat": "^2.24.3",
+		"hardhat-abi-exporter": "^2.11.0",
+		"hardhat-contract-sizer": "^2.10.0",
+		"hardhat-deploy": "^1.0.3",
+		"hardhat-gas-reporter": "^2.3.0",
+		"mocha": "^10.7.0",
+		"solidity-coverage": "^0.8.16",
+		"ts-node": "^10.9.1",
+		"tsc-watch": "^6.2.0",
+		"tsup": "^8.3.0",
+		"viem": "^2.31.2"
+	},
+	"dependencies": {
+		"@typechain/ethers-v6": "^0.5.1",
+		"@typechain/hardhat": "^9.1.0",
+		"@types/node": "^24.0.1",
+		"typechain": "^8.3.2",
+		"typescript": "^5.8.3"
+	}
+}
