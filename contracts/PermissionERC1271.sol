@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.20;
 
-import './helpers/dao/IPermissionCondition.sol';
+import './interfaces/IPermissionERC1271.sol';
 import './helpers/dao/IDAO.sol';
 import './helpers/multiSig/IMembership.sol';
 import '@openzeppelin/contracts/utils/cryptography/ECDSA.sol';
@@ -9,16 +9,8 @@ import '@openzeppelin/contracts/utils/cryptography/ECDSA.sol';
 /// @title PermissionERC1271
 /// @notice A generic, reusable permission condition contract that validates ERC-1271 signatures
 ///         by checking if the signer is a member of a MultiSig plugin
-/// @dev Implements IPermissionCondition to enable conditional permission grants for Aragon DAOs
-contract PermissionERC1271 is IPermissionCondition {
-	/// @notice Thrown when trying to configure a zero address as MultiSig plugin
-	error InvalidMultiSigAddress();
-
-	/// @notice Emitted when a DAO configures its MultiSig plugin
-	/// @param dao The DAO address
-	/// @param multiSigPlugin The MultiSig plugin address
-	event MultiSigConfigured(address indexed dao, address indexed multiSigPlugin);
-
+/// @dev Implements IPermissionERC1271 to enable conditional permission grants for Aragon DAOs
+contract PermissionERC1271 is IPermissionERC1271 {
 	/// @notice Mapping of DAO address to its configured MultiSig plugin address
 	mapping(address => address) public daoMultiSigPlugin;
 
