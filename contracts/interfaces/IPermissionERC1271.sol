@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.20;
 
-import '../helpers/dao/IPermissionCondition.sol';
+import {IPermissionCondition} from '../helpers/dao/IPermissionCondition.sol';
 
 /// @title IPermissionERC1271
 /// @notice Interface for the PermissionERC1271 contract

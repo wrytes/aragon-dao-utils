@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.20;
 
-import './interfaces/IPermissionERC1271.sol';
-import './helpers/dao/IDAO.sol';
-import './helpers/multiSig/IMembership.sol';
-import '@openzeppelin/contracts/utils/cryptography/ECDSA.sol';
+import {IPermissionERC1271} from './interfaces/IPermissionERC1271.sol';
+import {IDAO} from './helpers/dao/IDAO.sol';
+import {IMultiSig} from './helpers/multiSig/IMultiSig.sol';
+import {ECDSA} from '@openzeppelin/contracts/utils/cryptography/ECDSA.sol';
 
 /// @title PermissionERC1271
 /// @notice A generic, reusable permission condition contract that validates ERC-1271 signatures
@@ -23,11 +23,10 @@ contract PermissionERC1271 is IPermissionERC1271 {
 	bytes32 public constant EXECUTE_PERMISSION_ID = keccak256('EXECUTE_PERMISSION');
 
 	/// @notice Configures the MultiSig plugin address for the calling DAO
-	/// @param _multiSigPlugin The address of the MultiSig plugin contract that implements IMembership
+	/// @param _multiSigPlugin The address of the MultiSig plugin contract that implements IMultiSig
 	/// @dev msg.sender is used as the DAO address (no access control needed)
 	/// @dev Emits MultiSigConfigured event
 	function configMultisig(address _multiSigPlugin) external {
-		if (_multiSigPlugin == address(0)) revert InvalidMultiSigAddress();
 		daoMultiSigPlugin[msg.sender] = _multiSigPlugin;
 		emit MultiSigConfigured(msg.sender, _multiSigPlugin);
 	}
@@ -63,15 +62,47 @@ contract PermissionERC1271 is IPermissionERC1271 {
 		// Decode hash and signature from _data
 		(bytes32 hash, bytes memory signature) = abi.decode(_data, (bytes32, bytes));
 
-		// Recover signer from signature using tryRecover (doesn't revert on invalid signatures)
-		(address signer, ECDSA.RecoverError error, ) = ECDSA.tryRecover(hash, signature);
+		// Get min. approval addresses
+		(, uint16 minApprovals) = IMultiSig(multiSigPlugin).multisigSettings();
 
-		// Return false if signature recovery failed
-		if (error != ECDSA.RecoverError.NoError) {
+		// Each ECDSA signature is 65 bytes (r: 32 + s: 32 + v: 1)
+		if (signature.length < uint256(minApprovals) * 65) {
 			return false;
 		}
 
-		// Check if signer is a member of the MultiSig
-		return IMembership(multiSigPlugin).isMember(signer);
+		// Loop through each signature, recover the signer, and validate
+		address[] memory seen = new address[](minApprovals);
+
+		for (uint16 i = 0; i < minApprovals; i++) {
+			uint256 offset = uint256(i) * 65;
+
+			// Extract individual 65-byte signature
+			bytes memory sig = new bytes(65);
+			for (uint256 j = 0; j < 65; j++) {
+				sig[j] = signature[offset + j];
+			}
+
+			(address signer, ECDSA.RecoverError err, ) = ECDSA.tryRecover(hash, sig);
+
+			// Check if signature is valid
+			if (err != ECDSA.RecoverError.NoError) {
+				return false;
+			}
+
+			// Check if signer is member
+			if (!IMultiSig(multiSigPlugin).isMember(signer)) {
+				return false;
+			}
+
+			// Reject duplicate signers
+			for (uint16 j = 0; j < i; j++) {
+				if (seen[j] == signer) {
+					return false;
+				}
+			}
+			seen[i] = signer;
+		}
+
+		return true;
 	}
 }
