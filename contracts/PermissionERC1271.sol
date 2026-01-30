@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.20;
 
-import {IPermissionERC1271} from './interfaces/IPermissionERC1271.sol';
+import {IPermissionERC1271, IPermissionCondition} from './interfaces/IPermissionERC1271.sol';
 import {IDAO} from './helpers/dao/IDAO.sol';
 import {IMultiSig} from './helpers/multiSig/IMultiSig.sol';
 import {ECDSA} from '@openzeppelin/contracts/utils/cryptography/ECDSA.sol';
@@ -21,6 +21,11 @@ contract PermissionERC1271 is IPermissionERC1271 {
 	/// @notice The ID of the permission required to call the `execute` function on the DAO
 	/// @dev This should match DAO.EXECUTE_PERMISSION_ID
 	bytes32 public constant EXECUTE_PERMISSION_ID = keccak256('EXECUTE_PERMISSION');
+
+	/// @notice ERC-165 interface support (required by DAO's grantWithCondition)
+	function supportsInterface(bytes4 interfaceId) external pure returns (bool) {
+		return interfaceId == type(IPermissionCondition).interfaceId || interfaceId == 0x01ffc9a7; // ERC-165
+	}
 
 	/// @notice Configures the MultiSig plugin address for the calling DAO
 	/// @param _multiSigPlugin The address of the MultiSig plugin contract that implements IMultiSig

@@ -1,11 +1,20 @@
 import { expect } from 'chai';
 import { ethers } from 'hardhat';
-import { PermissionERC1271 } from '../typechain';
+import { IDAO, IMultiSig, PermissionERC1271 } from '../typechain';
 import { SignerWithAddress } from '@nomicfoundation/hardhat-ethers/signers';
 
 describe('PermissionERC1271', function () {
+	let daoSigner: SignerWithAddress;
+	let daoSigner1: SignerWithAddress;
+	let daoSigner2: SignerWithAddress;
+
+	let member1: SignerWithAddress;
+	let member2: SignerWithAddress;
+	let randomUser: SignerWithAddress;
+
 	let permissionERC1271: PermissionERC1271;
-	let deployer: SignerWithAddress;
+	let multiSig: IMultiSig;
+	let dao: IDAO;
 
 	// Permission IDs
 	const VALIDATE_SIGNATURE_PERMISSION_ID = ethers.keccak256(ethers.toUtf8Bytes('VALIDATE_SIGNATURE_PERMISSION'));
@@ -14,20 +23,111 @@ describe('PermissionERC1271', function () {
 	// Test addresses provided
 	const DAO_ADDRESS = '0x5f238e89F3ba043CF202E1831446cA8C5cd40846';
 	const MULTISIG_ADDRESS = '0xC6F044202D29EB26dF524772C557776D14F02b23';
-	const SIGNER_ADDRESS = '0x0170F42f224b99CcbbeE673093589c5f9691dd06';
-
-	// Test message
-	const MESSAGE = `By_signing_this_message,_you_confirm_that_you_are_the_sole_owner_of_the_provided_Blockchain_address._Your_ID:_${SIGNER_ADDRESS}`;
-	const MESSAGE_HASH = ''; // TODO: replace with signature
-
-	// Signature
-	const SIGNATURE = ''; // TODO: replace with signature
+	const DAO_MEMBER_1_ADDRESS = '0x0170F42f224b99CcbbeE673093589c5f9691dd06';
+	const DAO_MEMBER_2_ADDRESS = '0x9102eEbC8F4fB55d3766cA6DF6FB3d6AEC334Ce3';
 
 	before(async function () {
-		[deployer] = await ethers.getSigners();
-	});
+		// Fork from specific block
+		const alchemyKey = process.env.ALCHEMY_RPC_KEY;
+		await ethers.provider.send('hardhat_reset', [
+			{
+				forking: {
+					jsonRpcUrl: `https://eth-mainnet.g.alchemy.com/v2/${alchemyKey}`,
+					blockNumber: 24347672,
+				},
+			},
+		]);
 
-	beforeEach(async function () {
+		// we need the private keys to actually sign data
+		[member1, member2, randomUser] = await ethers.getSigners();
+
+		// fund dao members with ETH
+		await randomUser.sendTransaction({ to: DAO_ADDRESS, value: ethers.parseEther('1') });
+		await randomUser.sendTransaction({ to: DAO_MEMBER_1_ADDRESS, value: ethers.parseEther('1') });
+		await randomUser.sendTransaction({ to: DAO_MEMBER_2_ADDRESS, value: ethers.parseEther('1') });
+
+		console.log('\n=== Impersonating DAO signers ===');
+		await ethers.provider.send('hardhat_impersonateAccount', [DAO_ADDRESS]);
+		daoSigner = await ethers.getSigner(DAO_ADDRESS);
+
+		await ethers.provider.send('hardhat_impersonateAccount', [DAO_MEMBER_1_ADDRESS]);
+		daoSigner1 = await ethers.getSigner(DAO_MEMBER_1_ADDRESS);
+
+		await ethers.provider.send('hardhat_impersonateAccount', [DAO_MEMBER_2_ADDRESS]);
+		daoSigner2 = await ethers.getSigner(DAO_MEMBER_2_ADDRESS);
+
+		// create proposal to add the new members
+		multiSig = await ethers.getContractAt('IMultiSig', MULTISIG_ADDRESS);
+		dao = await ethers.getContractAt('IDAO', DAO_ADDRESS);
+
+		// Encode the addAddresses call with both new signers
+		const addAddressesData = multiSig.interface.encodeFunctionData('addAddresses', [
+			[member1.address, member2.address],
+		]);
+
+		console.log('\n=== Creating proposal to add new signers ===');
+		console.log('New signer 1 (member1):', member1.address);
+		console.log('New signer 2 (member2):', member2.address);
+		console.log('Action target:', MULTISIG_ADDRESS);
+		console.log('Action data:', addAddressesData);
+
+		// Action: call addAddresses on the multisig itself
+		const actions = [
+			{
+				to: MULTISIG_ADDRESS,
+				value: 0,
+				data: addAddressesData,
+			},
+		];
+
+		const block = await ethers.provider.getBlock('latest');
+		const endDate = BigInt(block!.timestamp) + BigInt(7 * 24 * 60 * 60); // +7 days
+		console.log('Start date: 0 (immediate)');
+		console.log('End date:', endDate.toString());
+
+		// daoSigner1 creates the proposal and approves it
+		console.log('\n=== daoSigner1 creating proposal + approving ===');
+
+		const tx = await multiSig
+			.connect(daoSigner1)
+			['createProposal(bytes,(address,uint256,bytes)[],uint256,bool,bool,uint64,uint64)'](
+				'0x', // metadata
+				actions, // actions
+				0, // allowFailureMap
+				true, // approveProposal
+				false, // tryExecution
+				0, // startDate (immediate)
+				endDate // endDate
+			);
+
+		const receipt = await tx.wait();
+		console.log('Proposal tx hash:', receipt!.hash);
+
+		// Get the proposalId from the ProposalCreated event
+		const proposalCreatedEvent = receipt!.logs.find((log: any) => {
+			try {
+				return (
+					multiSig.interface.parseLog({ topics: log.topics as string[], data: log.data })?.name ===
+					'ProposalCreated'
+				);
+			} catch {
+				return false;
+			}
+		});
+		const parsedEvent = multiSig.interface.parseLog({
+			topics: proposalCreatedEvent!.topics as string[],
+			data: proposalCreatedEvent!.data,
+		});
+		const proposalId = parsedEvent!.args.proposalId;
+		console.log('Proposal ID:', proposalId.toString());
+
+		// daoSigner2 approves and tries execution
+		console.log('\n=== daoSigner2 approving + tryExecution ===');
+		const approveTx = await multiSig.connect(daoSigner2).approve(proposalId, true);
+		const approveReceipt = await approveTx.wait();
+		console.log('Approve tx hash:', approveReceipt!.hash);
+		console.log('=== Proposal setup complete ===\n');
+
 		// Deploy PermissionERC1271 contract
 		const PermissionERC1271Factory = await ethers.getContractFactory('PermissionERC1271');
 		permissionERC1271 = await PermissionERC1271Factory.deploy();
@@ -35,6 +135,11 @@ describe('PermissionERC1271', function () {
 	});
 
 	describe('Deployment', function () {
+		it('Should have new members added to multisig', async function () {
+			expect(await multiSig.isMember(member1.address)).to.be.true;
+			expect(await multiSig.isMember(member2.address)).to.be.true;
+		});
+
 		it('Should deploy successfully', async function () {
 			expect(await permissionERC1271.getAddress()).to.be.properAddress;
 		});
@@ -49,16 +154,6 @@ describe('PermissionERC1271', function () {
 
 	describe('configMultisig', function () {
 		it('Should allow DAO to configure MultiSig plugin', async function () {
-			// Impersonate the DAO address
-			await ethers.provider.send('hardhat_impersonateAccount', [DAO_ADDRESS]);
-			const daoSigner = await ethers.getSigner(DAO_ADDRESS);
-
-			// Fund the DAO address for gas
-			await deployer.sendTransaction({
-				to: DAO_ADDRESS,
-				value: ethers.parseEther('1.0'),
-			});
-
 			// Configure MultiSig
 			await expect(permissionERC1271.connect(daoSigner).configMultisig(MULTISIG_ADDRESS))
 				.to.emit(permissionERC1271, 'MultiSigConfigured')
@@ -66,112 +161,143 @@ describe('PermissionERC1271', function () {
 
 			// Verify configuration
 			expect(await permissionERC1271.daoMultiSigPlugin(DAO_ADDRESS)).to.equal(MULTISIG_ADDRESS);
-
-			// Stop impersonating
-			await ethers.provider.send('hardhat_stopImpersonatingAccount', [DAO_ADDRESS]);
 		});
 
-		it('Should revert when configuring zero address', async function () {
-			await expect(permissionERC1271.configMultisig(ethers.ZeroAddress)).to.be.revertedWithCustomError(
-				permissionERC1271,
-				'InvalidMultiSigAddress'
-			);
+		it('Should allow configuring zero address to deactivate plugin', async function () {
+			// Deactivate by setting zero address
+			await expect(permissionERC1271.connect(daoSigner).configMultisig(ethers.ZeroAddress))
+				.to.emit(permissionERC1271, 'MultiSigConfigured')
+				.withArgs(DAO_ADDRESS, ethers.ZeroAddress);
+
+			expect(await permissionERC1271.daoMultiSigPlugin(DAO_ADDRESS)).to.equal(ethers.ZeroAddress);
 		});
 
 		it('Should allow reconfiguration', async function () {
-			// First configuration
-			await permissionERC1271.configMultisig(MULTISIG_ADDRESS);
-
-			// Reconfigure with different address
-			const newMultiSig = '0x1234567890123456789012345678901234567890';
-			await expect(permissionERC1271.configMultisig(newMultiSig))
-				.to.emit(permissionERC1271, 'MultiSigConfigured')
-				.withArgs(deployer.address, newMultiSig);
-
-			expect(await permissionERC1271.daoMultiSigPlugin(deployer.address)).to.equal(newMultiSig);
+			await permissionERC1271.connect(daoSigner).configMultisig(MULTISIG_ADDRESS);
+			expect(await permissionERC1271.daoMultiSigPlugin(DAO_ADDRESS)).to.equal(MULTISIG_ADDRESS);
 		});
 	});
 
 	describe('isGranted - Signature Validation', function () {
-		it('Should return false when DAO has no MultiSig configured', async function () {
-			// Encode data as expected by isGranted
-			const data = ethers.AbiCoder.defaultAbiCoder().encode(['bytes32', 'bytes'], [MESSAGE_HASH, SIGNATURE]);
+		const ANY_ADDR = '0xFFfFfFffFFfffFFfFFfFFFFFffFFFffffFfFFFfF';
 
-			// Call isGranted
-			const result = await permissionERC1271.isGranted(
-				DAO_ADDRESS, // _where (the DAO)
-				ethers.ZeroAddress, // _who (not used)
-				VALIDATE_SIGNATURE_PERMISSION_ID, // _permissionId
-				data // _data
-			);
-
-			expect(result).to.be.false;
+		it('Granted VALIDATE_SIGNATURE_PERMISSION_ID with condition on DAO', async function () {
+			// Grant VALIDATE_SIGNATURE_PERMISSION_ID on the DAO with PermissionERC1271 as condition
+			await dao
+				.connect(daoSigner)
+				.grantWithCondition(
+					DAO_ADDRESS,
+					ANY_ADDR,
+					VALIDATE_SIGNATURE_PERMISSION_ID,
+					await permissionERC1271.getAddress()
+				);
 		});
 
 		it('Should return false with wrong permission ID', async function () {
-			// Configure MultiSig for DAO
-			await ethers.provider.send('hardhat_impersonateAccount', [DAO_ADDRESS]);
-			const daoSigner = await ethers.getSigner(DAO_ADDRESS);
-			await deployer.sendTransaction({ to: DAO_ADDRESS, value: ethers.parseEther('1.0') });
-			await permissionERC1271.connect(daoSigner).configMultisig(MULTISIG_ADDRESS);
-			await ethers.provider.send('hardhat_stopImpersonatingAccount', [DAO_ADDRESS]);
-
-			// Encode data
-			const data = ethers.AbiCoder.defaultAbiCoder().encode(['bytes32', 'bytes'], [MESSAGE_HASH, SIGNATURE]);
-
-			// Call isGranted with wrong permission ID
+			const data = ethers.AbiCoder.defaultAbiCoder().encode(['bytes32', 'bytes'], [ethers.ZeroHash, '0x']);
 			const wrongPermissionId = ethers.keccak256(ethers.toUtf8Bytes('WRONG_PERMISSION'));
-			const result = await permissionERC1271.isGranted(DAO_ADDRESS, ethers.ZeroAddress, wrongPermissionId, data);
 
+			const result = await permissionERC1271.isGranted(DAO_ADDRESS, ethers.ZeroAddress, wrongPermissionId, data);
 			expect(result).to.be.false;
 		});
 
-		it('Should have configured MultiSig address', async function () {
-			// Impersonate DAO and configure
-			await ethers.provider.send('hardhat_impersonateAccount', [DAO_ADDRESS]);
-			const daoSigner = await ethers.getSigner(DAO_ADDRESS);
-			await deployer.sendTransaction({ to: DAO_ADDRESS, value: ethers.parseEther('1.0') });
+		it('Should validate valid signatures from multisig members', async function () {
+			const messageHash = ethers.keccak256(ethers.toUtf8Bytes('test message'));
 
-			await permissionERC1271.connect(daoSigner).configMultisig(MULTISIG_ADDRESS);
+			// member1 and member2 sign the hash (EIP-191 prefix applied by signMessage)
+			const sig1 = await member1.signMessage(ethers.getBytes(messageHash));
+			const sig2 = await member2.signMessage(ethers.getBytes(messageHash));
 
-			expect(await permissionERC1271.daoMultiSigPlugin(DAO_ADDRESS)).to.equal(MULTISIG_ADDRESS);
+			// The prefixed hash is what was actually signed
+			const prefixedHash = ethers.hashMessage(ethers.getBytes(messageHash));
+			const concatenatedSig = ethers.concat([sig1, sig2]);
 
-			await ethers.provider.send('hardhat_stopImpersonatingAccount', [DAO_ADDRESS]);
+			const data = ethers.AbiCoder.defaultAbiCoder().encode(
+				['bytes32', 'bytes'],
+				[prefixedHash, concatenatedSig]
+			);
+
+			const result = await permissionERC1271.isGranted(
+				DAO_ADDRESS,
+				ethers.ZeroAddress,
+				VALIDATE_SIGNATURE_PERMISSION_ID,
+				data
+			);
+			expect(result).to.be.true;
 		});
 
-		it('Should display test data for manual signature generation', async function () {
-			console.log('\n=== Data for Signature Generation ===');
-			console.log('DAO Address:', DAO_ADDRESS);
-			console.log('MultiSig Address:', MULTISIG_ADDRESS);
-			console.log('Expected Signer:', SIGNER_ADDRESS);
-			console.log('\nMessage:', MESSAGE);
-			console.log('\nIMPORTANT: Safe uses EIP-712 structured signing');
-			console.log('Use SafeMessage hash from Safe wallet:');
-			console.log('MESSAGE_HASH (SafeMessage hash):', MESSAGE_HASH);
-			console.log('Current Signature (dummy):', SIGNATURE);
-			console.log('\nPermission IDs:');
-			console.log('VALIDATE_SIGNATURE_PERMISSION_ID:', VALIDATE_SIGNATURE_PERMISSION_ID);
-			console.log('EXECUTE_PERMISSION_ID:', EXECUTE_PERMISSION_ID);
-			console.log('\nNote: Replace SIGNATURE constant with the signature from Safe wallet');
-			console.log('The signature should be the ECDSA signature over the SafeMessage hash');
-			console.log('=====================================\n');
+		it('Should return false with insufficient signatures', async function () {
+			const messageHash = ethers.keccak256(ethers.toUtf8Bytes('test message'));
+			const sig1 = await member1.signMessage(ethers.getBytes(messageHash));
+			const prefixedHash = ethers.hashMessage(ethers.getBytes(messageHash));
+
+			// Only 1 signature when minApprovals requires 2
+			const data = ethers.AbiCoder.defaultAbiCoder().encode(['bytes32', 'bytes'], [prefixedHash, sig1]);
+
+			const result = await permissionERC1271.isGranted(
+				DAO_ADDRESS,
+				ethers.ZeroAddress,
+				VALIDATE_SIGNATURE_PERMISSION_ID,
+				data
+			);
+			expect(result).to.be.false;
 		});
 
-		// it('Should recover signer from hash and signature', async function () {
-		// 	const hash = '0x8b900d7e92475f5c3bee6d70642aa2fa7f13c76d3aa3f4fbc6434ce94c730492';
-		// 	const sig =
-		// 		'0x833702bf66abd92e1b6089944507c54b3f66a5007f952173ec6418d2da20a78329a4c64ee63793614ccf88c1d9d25d17e137b24716bc72a43c0fa1f7345b89d91b';
+		it('Should return false with duplicate signers', async function () {
+			const messageHash = ethers.keccak256(ethers.toUtf8Bytes('test message'));
+			const sig1 = await member1.signMessage(ethers.getBytes(messageHash));
+			const prefixedHash = ethers.hashMessage(ethers.getBytes(messageHash));
 
-		// 	// Recover the signer address from the hash and signature
-		// 	const recovered = ethers.recoverAddress(hash, sig);
+			// Same signature twice
+			const concatenatedSig = ethers.concat([sig1, sig1]);
+			const data = ethers.AbiCoder.defaultAbiCoder().encode(
+				['bytes32', 'bytes'],
+				[prefixedHash, concatenatedSig]
+			);
 
-		// 	console.log('\n=== Signature Recovery ===');
-		// 	console.log('Hash:', hash);
-		// 	console.log('Signature:', sig);
-		// 	console.log('Recovered Signer:', recovered);
-		// 	console.log('Expected Signer:', SIGNER_ADDRESS);
-		// 	console.log('Match:', recovered.toLowerCase() === SIGNER_ADDRESS.toLowerCase());
-		// 	console.log('========================\n');
-		// });
+			const result = await permissionERC1271.isGranted(
+				DAO_ADDRESS,
+				ethers.ZeroAddress,
+				VALIDATE_SIGNATURE_PERMISSION_ID,
+				data
+			);
+			expect(result).to.be.false;
+		});
+
+		it('Should return false with non-member signer', async function () {
+			const messageHash = ethers.keccak256(ethers.toUtf8Bytes('test message'));
+			const sig1 = await member1.signMessage(ethers.getBytes(messageHash));
+			const sigRandom = await randomUser.signMessage(ethers.getBytes(messageHash));
+			const prefixedHash = ethers.hashMessage(ethers.getBytes(messageHash));
+
+			const concatenatedSig = ethers.concat([sig1, sigRandom]);
+			const data = ethers.AbiCoder.defaultAbiCoder().encode(
+				['bytes32', 'bytes'],
+				[prefixedHash, concatenatedSig]
+			);
+
+			const result = await permissionERC1271.isGranted(
+				DAO_ADDRESS,
+				ethers.ZeroAddress,
+				VALIDATE_SIGNATURE_PERMISSION_ID,
+				data
+			);
+			expect(result).to.be.false;
+		});
+
+		it('Should validate signature via DAO isValidSignature (ERC-1271)', async function () {
+			const messageHash = ethers.keccak256(ethers.toUtf8Bytes('test message'));
+
+			const sig1 = await member1.signMessage(ethers.getBytes(messageHash));
+			const sig2 = await member2.signMessage(ethers.getBytes(messageHash));
+
+			// DAO passes _hash directly to the condition, so use the prefixed hash
+			const prefixedHash = ethers.hashMessage(ethers.getBytes(messageHash));
+			const concatenatedSig = ethers.concat([sig1, sig2]);
+
+			const ERC1271_MAGIC_VALUE = '0x1626ba7e';
+			const result = await dao.isValidSignature(prefixedHash, concatenatedSig);
+			expect(result).to.equal(ERC1271_MAGIC_VALUE);
+		});
 	});
 });
