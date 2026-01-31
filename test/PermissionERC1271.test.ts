@@ -300,4 +300,138 @@ describe('PermissionERC1271', function () {
 			expect(result).to.equal(ERC1271_MAGIC_VALUE);
 		});
 	});
+
+	describe('CoW Protocol ERC-1271 - EIP-712 Order Signing', function () {
+		const GPV2_SETTLEMENT = '0x9008D19f58AAbD9eD0D60971565AA8510560ab41';
+		const ERC1271_MAGIC_VALUE = '0x1626ba7e';
+
+		// CoW Protocol EIP-712 domain
+		const domain = {
+			name: 'Gnosis Protocol',
+			version: 'v2',
+			chainId: 1,
+			verifyingContract: GPV2_SETTLEMENT,
+		};
+
+		// GPv2Order.Data struct type
+		const types = {
+			Order: [
+				{ name: 'sellToken', type: 'address' },
+				{ name: 'buyToken', type: 'address' },
+				{ name: 'receiver', type: 'address' },
+				{ name: 'sellAmount', type: 'uint256' },
+				{ name: 'buyAmount', type: 'uint256' },
+				{ name: 'validTo', type: 'uint32' },
+				{ name: 'appData', type: 'bytes32' },
+				{ name: 'feeAmount', type: 'uint256' },
+				{ name: 'kind', type: 'bytes32' },
+				{ name: 'partiallyFillable', type: 'bool' },
+				{ name: 'sellTokenBalance', type: 'bytes32' },
+				{ name: 'buyTokenBalance', type: 'bytes32' },
+			],
+		};
+
+		// CoW order kind and balance constants
+		const KIND_SELL = ethers.keccak256(ethers.toUtf8Bytes('sell'));
+		const BALANCE_ERC20 = ethers.keccak256(ethers.toUtf8Bytes('erc20'));
+
+		const WETH = '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2';
+		const USDC = '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48';
+
+		let order: any;
+		let orderDigest: string;
+
+		before(async function () {
+			const block = await ethers.provider.getBlock('latest');
+
+			order = {
+				sellToken: WETH,
+				buyToken: USDC,
+				receiver: DAO_ADDRESS,
+				sellAmount: ethers.parseEther('1'),
+				buyAmount: BigInt(2000e6), // 2000 USDC (6 decimals)
+				validTo: block!.timestamp + 3600,
+				appData: ethers.ZeroHash,
+				feeAmount: 0,
+				kind: KIND_SELL,
+				partiallyFillable: false,
+				sellTokenBalance: BALANCE_ERC20,
+				buyTokenBalance: BALANCE_ERC20,
+			};
+
+			// Compute the EIP-712 order digest
+			orderDigest = ethers.TypedDataEncoder.hash(domain, types, order);
+			console.log('\n=== CoW Protocol EIP-712 Order ===');
+			console.log('Order digest:', orderDigest);
+			console.log('Sell: 1 WETH -> Buy: 2000 USDC');
+			console.log('Receiver:', DAO_ADDRESS);
+		});
+
+		it('Should validate CoW order signed by multisig members via isGranted', async function () {
+			// Members sign the order using EIP-712 (signs the raw digest, no EIP-191 prefix)
+			const sig1 = await member1.signTypedData(domain, types, order);
+			const sig2 = await member2.signTypedData(domain, types, order);
+
+			const concatenatedSig = ethers.concat([sig1, sig2]);
+			const data = ethers.AbiCoder.defaultAbiCoder().encode(
+				['bytes32', 'bytes'],
+				[orderDigest, concatenatedSig]
+			);
+
+			const result = await permissionERC1271.isGranted(
+				DAO_ADDRESS,
+				ethers.ZeroAddress,
+				VALIDATE_SIGNATURE_PERMISSION_ID,
+				data
+			);
+			expect(result).to.be.true;
+		});
+
+		it('Should validate CoW order via DAO isValidSignature (full ERC-1271 flow)', async function () {
+			const sig1 = await member1.signTypedData(domain, types, order);
+			const sig2 = await member2.signTypedData(domain, types, order);
+
+			const concatenatedSig = ethers.concat([sig1, sig2]);
+
+			// This is exactly what CoW settlement contract calls
+			const result = await dao.isValidSignature(orderDigest, concatenatedSig);
+			expect(result).to.equal(ERC1271_MAGIC_VALUE);
+		});
+
+		it('Should reject CoW order with only one signer', async function () {
+			const sig1 = await member1.signTypedData(domain, types, order);
+
+			const data = ethers.AbiCoder.defaultAbiCoder().encode(
+				['bytes32', 'bytes'],
+				[orderDigest, sig1]
+			);
+
+			const result = await permissionERC1271.isGranted(
+				DAO_ADDRESS,
+				ethers.ZeroAddress,
+				VALIDATE_SIGNATURE_PERMISSION_ID,
+				data
+			);
+			expect(result).to.be.false;
+		});
+
+		it('Should reject CoW order signed by non-member', async function () {
+			const sig1 = await member1.signTypedData(domain, types, order);
+			const sigRandom = await randomUser.signTypedData(domain, types, order);
+
+			const concatenatedSig = ethers.concat([sig1, sigRandom]);
+			const data = ethers.AbiCoder.defaultAbiCoder().encode(
+				['bytes32', 'bytes'],
+				[orderDigest, concatenatedSig]
+			);
+
+			const result = await permissionERC1271.isGranted(
+				DAO_ADDRESS,
+				ethers.ZeroAddress,
+				VALIDATE_SIGNATURE_PERMISSION_ID,
+				data
+			);
+			expect(result).to.be.false;
+		});
+	});
 });

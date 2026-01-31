@@ -67,7 +67,7 @@ contract PermissionERC1271 is IPermissionERC1271 {
 		// Decode hash and signature from _data
 		(bytes32 hash, bytes memory signature) = abi.decode(_data, (bytes32, bytes));
 
-		// Get min. approval addresses
+		// Get min. approval signers
 		(, uint16 minApprovals) = IMultiSig(multiSigPlugin).multisigSettings();
 
 		// Each ECDSA signature is 65 bytes (r: 32 + s: 32 + v: 1)
@@ -95,7 +95,7 @@ contract PermissionERC1271 is IPermissionERC1271 {
 			}
 
 			// Check if signer is member
-			if (!IMultiSig(multiSigPlugin).isMember(signer)) {
+			if (IMultiSig(multiSigPlugin).isMember(signer) == false) {
 				return false;
 			}
 
